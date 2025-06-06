@@ -1,4 +1,8 @@
 <#
+
+    VMware Workstation Auditor
+    Version: 1.0.0
+    
     Copyright 2025 Richard Wadsworth
 
     Licensed under the Apache License, Version 2.0 (the "License");
