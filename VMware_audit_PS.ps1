@@ -1,0 +1,210 @@
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$script:vmDirectory = "$env:USERPROFILE\Documents\Virtual Machines"
+$script:vmAuditData = @()
+$script:vmwareVersion = ""
+
+function Read-VMXFlat {
+    param (
+        [string]$filePath,
+        [string]$vmName
+    )
+    $result = @()
+    $vmxData = @{}
+    try {
+        $lines = Get-Content -Path $filePath -ErrorAction Stop
+        foreach ($line in $lines) {
+            if ($line -match '^\s*([^#][^=]+?)\s*=\s*"?(.+?)"?$') {
+                $key = $matches[1].Trim()
+                $value = $matches[2].Trim()
+                $vmxData[$key] = $value
+                $result += [PSCustomObject]@{
+                    VMName      = $vmName
+                    Key         = $key
+                    Value       = $value
+                    VMVersion   = $vmxData['virtualHW.version']
+                    SnapshotUID = ""
+                }
+            }
+        }
+    } catch {
+        $result += [PSCustomObject]@{
+            VMName      = $vmName
+            Key         = "Error"
+            Value       = $_.Exception.Message
+            VMVersion   = ""
+            SnapshotUID = ""
+        }
+    }
+    return $result
+}
+
+function Read-SnapshotMeta {
+    param (
+        [string]$vmDir,
+        [string]$vmName
+    )
+    $vmsd = Join-Path $vmDir "$vmName.vmsd"
+    $results = @()
+
+    if (Test-Path $vmsd) {
+        try {
+            $content = Get-Content $vmsd | Where-Object { $_ -match "snapshot\." }
+            foreach ($line in $content) {
+                $uid = ""
+                if ($line -match 'snapshot\.([a-zA-Z0-9_]+)') {
+                    $uid = $matches[1]
+                }
+
+                $results += [PSCustomObject]@{
+                    VMName      = $vmName
+                    Key         = "SnapshotMeta"
+                    Value       = $line.Trim()
+                    VMVersion   = ""
+                    SnapshotUID = $uid
+                }
+            }
+        } catch {
+            $results += [PSCustomObject]@{
+                VMName      = $vmName
+                Key         = "SnapshotMetaError"
+                Value       = $_.Exception.Message
+                VMVersion   = ""
+                SnapshotUID = ""
+            }
+        }
+    }
+
+    return $results
+}
+
+function Invoke-Audit {
+    $script:vmAuditData = @()
+
+    $vmwareReg = "HKLM:\SOFTWARE\WOW6432Node\VMware, Inc.\VMware Workstation"
+    if (Test-Path $vmwareReg) {
+        $script:vmwareVersion = (Get-ItemProperty -Path $vmwareReg).ProductVersion
+    } else {
+        $script:vmwareVersion = "Not Detected"
+    }
+
+    $vmxFiles = Get-ChildItem -Path $script:vmDirectory -Recurse -Filter *.vmx -ErrorAction SilentlyContinue | Sort-Object Name
+    foreach ($vmx in $vmxFiles) {
+        $vmName = [System.IO.Path]::GetFileNameWithoutExtension($vmx.FullName)
+        $vmDir = Split-Path $vmx.FullName
+        $script:vmAuditData += Read-VMXFlat -filePath $vmx.FullName -vmName $vmName
+        $script:vmAuditData += Read-SnapshotMeta -vmDir $vmDir -vmName $vmName
+    }
+}
+
+function Save-ToCSV {
+    $dlg = New-Object Windows.Forms.SaveFileDialog
+    $dlg.Filter = "CSV files (*.csv)|*.csv"
+    $dlg.Title = "Save Audit Report"
+    $dlg.FileName = "VMwareAuditReport.csv"
+    if ($dlg.ShowDialog() -eq "OK") {
+        try {
+            $script:vmAuditData | Export-Csv -Path $dlg.FileName -NoTypeInformation -Encoding UTF8
+            [System.Windows.Forms.MessageBox]::Show("Report saved to:`n$($dlg.FileName)", "Export Successful")
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show("Failed to save report.`nError: $_", "Error")
+        }
+    }
+}
+
+function Show-GUI {
+    $form = New-Object Windows.Forms.Form
+    $form.Text = "VMware Workstation Auditor (Table View)"
+    $form.Size = New-Object Drawing.Size(1000, 660)
+    $form.StartPosition = "CenterScreen"
+
+    $lbl = New-Object Windows.Forms.Label
+    $lbl.Text = "VM Directory:"
+    $lbl.Location = '10,15'
+    $lbl.Size = '90,20'
+    $form.Controls.Add($lbl)
+
+    $txtPath = New-Object Windows.Forms.TextBox
+    $txtPath.Text = $script:vmDirectory
+    $txtPath.Location = '100,12'
+    $txtPath.Size = '640,22'
+    $form.Controls.Add($txtPath)
+
+    $btnBrowse = New-Object Windows.Forms.Button
+    $btnBrowse.Text = "Browse..."
+    $btnBrowse.Location = '750,10'
+    $btnBrowse.Size = '80,24'
+    $btnBrowse.Add_Click({
+        $dlg = New-Object Windows.Forms.FolderBrowserDialog
+        if ($dlg.ShowDialog() -eq "OK") {
+            $txtPath.Text = $dlg.SelectedPath
+            $script:vmDirectory = $dlg.SelectedPath
+        }
+    })
+    $form.Controls.Add($btnBrowse)
+
+    $btnAudit = New-Object Windows.Forms.Button
+    $btnAudit.Text = "Run Audit"
+    $btnAudit.Location = '840,10'
+    $btnAudit.Size = '90,24'
+    $form.Controls.Add($btnAudit)
+
+    $listView = New-Object Windows.Forms.ListView
+    $listView.View = 'Details'
+    $listView.FullRowSelect = $true
+    $listView.GridLines = $true
+    $listView.Location = '10,45'
+    $listView.Size = '960,530'
+    $listView.Columns.Add("VM Name", 180)
+    $listView.Columns.Add("Key", 280)
+    $listView.Columns.Add("Value", 280)
+    $listView.Columns.Add("VM Version", 90)
+    $listView.Columns.Add("Snapshot Info", 120)
+    $form.Controls.Add($listView)
+
+    $btnSave = New-Object Windows.Forms.Button
+    $btnSave.Text = "Save to CSV"
+    $btnSave.Location = '10,585'
+    $btnSave.Size = '100,26'
+    $btnSave.Add_Click({ Save-ToCSV })
+    $form.Controls.Add($btnSave)
+
+    $lblVersion = New-Object Windows.Forms.Label
+    $lblVersion.Text = "Version: (not yet scanned)"
+    $lblVersion.Location = '120,588'
+    $lblVersion.Size = '400,20'
+    $form.Controls.Add($lblVersion)
+
+    $btnAudit.Add_Click({
+        $script:vmDirectory = $txtPath.Text
+        if (-not (Test-Path $script:vmDirectory)) {
+            [System.Windows.Forms.MessageBox]::Show("Directory not found.", "Error")
+            return
+        }
+
+        $listView.Items.Clear()
+        Invoke-Audit
+
+        foreach ($item in $script:vmAuditData) {
+            $vmName      = if ($item.VMName) { $item.VMName } else { "" }
+            $key         = if ($item.Key) { $item.Key } else { "" }
+            $value       = if ($item.Value) { $item.Value } else { "" }
+            $vmVersion   = if ($item.VMVersion) { $item.VMVersion } else { "" }
+            $snapshotUID = if ($item.SnapshotUID) { $item.SnapshotUID } else { "" }
+
+            $row = New-Object Windows.Forms.ListViewItem($vmName)
+            [void]$row.SubItems.Add($key)
+            [void]$row.SubItems.Add($value)
+            [void]$row.SubItems.Add($vmVersion)
+            [void]$row.SubItems.Add($snapshotUID)
+            $listView.Items.Add($row)
+        }
+
+        $lblVersion.Text = "Version: $($script:vmwareVersion)"
+    })
+
+    [void]$form.ShowDialog()
+}
+
+Show-GUI
