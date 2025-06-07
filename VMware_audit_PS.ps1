@@ -1,8 +1,7 @@
 <#
-
     VMware Workstation Auditor
-    Version: 1.0.0
-    
+   
+
     Copyright 2025 Richard Wadsworth
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,12 +17,35 @@
     limitations under the License.
 #>
 
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
+try {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+} catch {
+    Write-Error "Failed to load required assemblies: $_"
+    exit
+}
 
 $script:vmDirectory = "$env:USERPROFILE\Documents\Virtual Machines"
 $script:vmAuditData = @()
 $script:vmwareVersion = ""
+$logFile = "$env:TEMP\VMwareAudit_ErrorLog.txt"
+$script:currentVersion = "1.1.5"
+
+function Write-ErrorLog {
+    param([string]$message)
+    Add-Content -Path $logFile -Value "$(Get-Date -Format u): $message"
+}
+function Test-ForUpdate {
+    try {
+        $url = "https://raw.githubusercontent.com/rich98/vmware_audit_powershell/main/VERSION.TXT"
+        $remoteVersion = (Invoke-RestMethod -Uri $url -UseBasicParsing).Trim()
+        if ($remoteVersion -ne $script:currentVersion) {
+            [System.Windows.Forms.MessageBox]::Show("A newer version ($($remoteVersion.Trim())) is available.", "Update Available")
+        }
+    } catch {
+        Write-ErrorLog -message "Update check failed: $_"
+    }
+}
 
 function Read-VMXFlat {
     param (
@@ -35,7 +57,7 @@ function Read-VMXFlat {
     try {
         $lines = Get-Content -Path $filePath -ErrorAction Stop
         foreach ($line in $lines) {
-            if ($line -match '^\s*([^#][^=]+?)\s*=\s*"?(.+?)"?$') {
+            if ($line -match '^[^#]*?([^=\s]+?)\s*=\s*"?(.+?)"?$') {
                 $key = $matches[1].Trim()
                 $value = $matches[2].Trim()
                 $vmxData[$key] = $value
@@ -49,6 +71,7 @@ function Read-VMXFlat {
             }
         }
     } catch {
+        Write-ErrorLog -message $_.Exception.Message
         $result += [PSCustomObject]@{
             VMName      = $vmName
             Key         = "Error"
@@ -70,22 +93,26 @@ function Read-SnapshotMeta {
 
     if (Test-Path $vmsd) {
         try {
-            $content = Get-Content $vmsd | Where-Object { $_ -match "snapshot\." }
+            $content = Get-Content $vmsd | Where-Object { $_ -match "snapshot\\." }
             foreach ($line in $content) {
                 $uid = ""
-                if ($line -match 'snapshot\.([a-zA-Z0-9_]+)') {
+                $desc = $line.Trim()
+                if ($line -match 'snapshot\\.([^.]+)\\.displayName\s*=\s*"(.+?)"') {
+                    $uid = $matches[1]
+                    $desc = $matches[2]
+                } elseif ($line -match 'snapshot\\.([^.]+)') {
                     $uid = $matches[1]
                 }
-
                 $results += [PSCustomObject]@{
                     VMName      = $vmName
                     Key         = "SnapshotMeta"
-                    Value       = $line.Trim()
+                    Value       = $desc
                     VMVersion   = ""
                     SnapshotUID = $uid
                 }
             }
         } catch {
+            Write-ErrorLog -message $_.Exception.Message
             $results += [PSCustomObject]@{
                 VMName      = $vmName
                 Key         = "SnapshotMetaError"
@@ -102,7 +129,7 @@ function Read-SnapshotMeta {
 function Invoke-Audit {
     $script:vmAuditData = @()
 
-    $vmwareReg = "HKLM:\SOFTWARE\WOW6432Node\VMware, Inc.\VMware Workstation"
+    $vmwareReg = "HKLM:\\SOFTWARE\\WOW6432Node\\VMware, Inc.\\VMware Workstation"
     if (Test-Path $vmwareReg) {
         $script:vmwareVersion = (Get-ItemProperty -Path $vmwareReg).ProductVersion
     } else {
@@ -128,14 +155,21 @@ function Save-ToCSV {
             $script:vmAuditData | Export-Csv -Path $dlg.FileName -NoTypeInformation -Encoding UTF8
             [System.Windows.Forms.MessageBox]::Show("Report saved to:`n$($dlg.FileName)", "Export Successful")
         } catch {
+            Write-ErrorLog -message $_.Exception.Message
             [System.Windows.Forms.MessageBox]::Show("Failed to save report.`nError: $_", "Error")
         }
     }
 }
 
+function Show-Help {
+    Test-ForUpdate
+    [System.Windows.Forms.MessageBox]::Show("This tool audits VMware Workstation VMs, extracting VMX data, hardware versions, and snapshot metadata. Results can be exported to CSV.", "Help")
+}
+
 function Show-GUI {
+    Test-ForUpdate
     $form = New-Object Windows.Forms.Form
-    $form.Text = "VMware Workstation Auditor (Table View)"
+    $form.Text = "VMware Workstation Auditor v$script:currentVersion (Table View)"
     $form.Size = New-Object Drawing.Size(1000, 660)
     $form.StartPosition = "CenterScreen"
 
@@ -179,7 +213,7 @@ function Show-GUI {
     $listView.Columns.Add("VM Name", 180)
     $listView.Columns.Add("Key", 280)
     $listView.Columns.Add("Value", 280)
-    $listView.Columns.Add("VM Version", 90)
+    $listView.Columns.Add("HW Version", 90)
     $listView.Columns.Add("Snapshot Info", 120)
     $form.Controls.Add($listView)
 
@@ -190,10 +224,25 @@ function Show-GUI {
     $btnSave.Add_Click({ Save-ToCSV })
     $form.Controls.Add($btnSave)
 
+    $btnHelp = New-Object Windows.Forms.Button
+    $btnHelp.Text = "Help"
+    $btnHelp.Location = '120,585'
+    $btnHelp.Size = '80,26'
+    $btnHelp.Add_Click({ Show-Help })
+    $form.Controls.Add($btnHelp)
+
+    $lblCount = New-Object Windows.Forms.Label
+    $lblCount.Text = "VMs Detected: 0"
+    $lblCount.Location = New-Object Drawing.Point(220, 588)
+    $lblCount.Size = New-Object Drawing.Size(200, 20)
+    $form.Controls.Add($lblCount)
+
     $lblVersion = New-Object Windows.Forms.Label
-    $lblVersion.Text = "Version: (not yet scanned)"
-    $lblVersion.Location = '120,588'
-    $lblVersion.Size = '400,20'
+    $lblVersion.Text = "Detected version of VMware Workstation is: (not yet scanned)"
+    $lblVersion.Location = New-Object Drawing.Point(($form.ClientSize.Width - 460), 588)
+    $lblVersion.Size = New-Object Drawing.Size(450, 20)
+    $lblVersion.Anchor = "Right,Bottom"
+    $lblVersion.TextAlign = 'MiddleRight'
     $form.Controls.Add($lblVersion)
 
     $btnAudit.Add_Click({
@@ -221,7 +270,13 @@ function Show-GUI {
             $listView.Items.Add($row)
         }
 
-        $lblVersion.Text = "Version: $($script:vmwareVersion)"
+        $listView.AutoResizeColumns("HeaderSize")
+        $lblVersion.Text = "Detected version of VMware Workstation is: $($script:vmwareVersion)"
+
+        $uniqueVMs = ($script:vmAuditData | Select-Object -ExpandProperty VMName -Unique).Count
+        $lblCount.Text = "VMs Detected: $uniqueVMs"
+
+        Test-ForUpdate
     })
 
     [void]$form.ShowDialog()
