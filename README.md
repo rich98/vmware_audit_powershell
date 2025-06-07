@@ -4,6 +4,10 @@ A graphical PowerShell utility that audits VMware Workstation environments, extr
 
 ![image](https://github.com/user-attachments/assets/715afd4a-6863-475a-bf83-afa57a98a9b8)
 
+Affter running:
+
+![image](https://github.com/user-attachments/assets/e7a3337b-da34-4972-a523-ee98a6394f09)
+
 ---
 
 ## 🔍 Features
