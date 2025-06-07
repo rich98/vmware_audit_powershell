@@ -1,6 +1,6 @@
 <#
     VMware Workstation Auditor
-    Version: 1.1.6
+    Version: 1.1.7
 
     Copyright 2025 Richard Wadsworth
 
@@ -17,7 +17,7 @@
     limitations under the License.
 
     CHANGE LOG:
-    - v1.1.6 (2025-06-07)
+    - v1.1.7 (2025-06-07)
       * Fixed remote version check using improved newline stripping.
       * Updated GUI title with version display.
       * Improved layout for version check dialog.
@@ -27,7 +27,18 @@
       * Fixed null handling for ListView subitems to prevent crash.
       * Color alternation is now based on VM identity, not line count.
       * Event log entry now written to Application log instead of Security.
+      * Fixed version number issie
+      * EVENT ID 9000 now written to Application log on startup.
+      * EVENT ID 9001 now written to Application log on CSV export.
 #>
+# Auto-elevate script if not running with full privileges
+if (-not ([Security.Principal.WindowsPrincipal] `
+    [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(`
+    [Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    Start-Process powershell.exe -Verb RunAs -ArgumentList $arguments
+    exit
+}
 
 try {
     Add-Type -AssemblyName System.Windows.Forms
@@ -38,17 +49,34 @@ try {
 }
 
 function Write-AuditEventLog {
+    param (
+        [int]$EventId = 9000,
+        [string]$Message = "VMware Workstation Audit started (Event ID: VWA9000)."
+    )
     try {
         $logName = "Application"
-        $source = "Windows PowerShell"
-
-        if (-not [System.Diagnostics.EventLog]::SourceExists($source)) {
-            New-EventLog -LogName $logName -Source $source -ErrorAction SilentlyContinue
+        $source = "VMWorkstationAuditLog"
+        $isAdmin = ([Security.Principal.WindowsPrincipal] `
+                    [Security.Principal.WindowsIdentity]::GetCurrent()
+                   ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        if (-not $isAdmin) {
+            [System.Windows.Forms.MessageBox]::Show("Administrator rights are required to write to the Windows Event Log.", "Access Denied")
+            return
         }
-
-        Write-EventLog -LogName $logName -Source $source -EventId 9000 -EntryType Information -Message "VMware Workstation Audit started (Event ID: VWA9000)."
+        if ([System.Diagnostics.EventLog]::SourceExists($source)) {
+            $registeredLog = [System.Diagnostics.EventLog]::LogNameFromSourceName($source, $env:COMPUTERNAME)
+            if ($registeredLog -ne $logName) {
+                Remove-EventLog -Source $source -ErrorAction SilentlyContinue
+                New-EventLog -LogName $logName -Source $source
+            }
+        } else {
+            New-EventLog -LogName $logName -Source $source
+        }
+        Write-EventLog -LogName $logName -Source $source -EventId $EventId -EntryType Information -Message $Message
     } catch {
-        Write-Warning "Unable to write to Application event log: $_"
+        $msg = "Unable to write to Windows Event Log: $_"
+        Write-ErrorLog -message $msg
+        [System.Windows.Forms.MessageBox]::Show($msg, "Event Log Error")
     }
 }
 
@@ -56,7 +84,7 @@ $script:vmDirectory = "$env:USERPROFILE\Documents\Virtual Machines"
 $script:vmAuditData = @()
 $script:vmwareVersion = ""
 $logFile = "$env:TEMP\VMwareAudit_ErrorLog.txt"
-$script:currentVersion = "1.1.6"
+$script:currentVersion = "1.1.7"
 
 function Write-ErrorLog {
     param([string]$message)
@@ -66,8 +94,11 @@ function Write-ErrorLog {
 function Test-ForUpdate {
     try {
         $url = "https://raw.githubusercontent.com/rich98/vmware_audit_powershell/main/VERSION.TXT"
-        $remoteVersion = (Invoke-RestMethod -Uri $url -UseBasicParsing) -replace '[\r\n]+', ''
-        if ($remoteVersion -ne $script:currentVersion) {
+        $remoteVersionRaw = (Invoke-RestMethod -Uri $url -UseBasicParsing).Trim()
+        $remoteVersion = [version]$remoteVersionRaw
+        $currentVersion = [version]$script:currentVersion
+
+        if ($remoteVersion -gt $currentVersion) {
             [System.Windows.Forms.MessageBox]::Show("A newer version ($remoteVersion) is available.", "Update Available")
         }
     } catch {
@@ -180,7 +211,13 @@ function Save-ToCSV {
     if ($dlg.ShowDialog() -eq "OK") {
         try {
             $script:vmAuditData | Export-Csv -Path $dlg.FileName -NoTypeInformation -Encoding UTF8
-            [System.Windows.Forms.MessageBox]::Show("Report saved to:`n$($dlg.FileName)", "Export Successful")
+
+            $username = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+            $savedFile = $dlg.FileName
+            $message = "WMA9001 data extract to CSV by $username. File saved as: $savedFile"
+            Write-AuditEventLog -EventId 9001 -Message $message
+
+            [System.Windows.Forms.MessageBox]::Show("Report saved to:`n$savedFile", "Export Successful")
         } catch {
             Write-ErrorLog -message $_.Exception.Message
             [System.Windows.Forms.MessageBox]::Show("Failed to save report.`nError: $_", "Error")
@@ -326,12 +363,3 @@ function Show-GUI {
 }
 
 Show-GUI
-
-
-
-
-
-
-
-
-
