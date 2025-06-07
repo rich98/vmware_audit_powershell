@@ -1,6 +1,6 @@
 <#
     VMware Workstation Auditor
-   
+    Version: 1.1.6
 
     Copyright 2025 Richard Wadsworth
 
@@ -15,6 +15,17 @@
     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
     See the License for the specific language governing permissions and
     limitations under the License.
+
+    CHANGE LOG:
+    - v1.1.6 (2025-06-07)
+      * Fixed remote version check using improved newline stripping.
+      * Updated GUI title with version display.
+      * Improved layout for version check dialog.
+      * Added compatibility for EXE wrapping via BAT launcher.
+      * General refinements to update logic and error handling.
+      * Alternating row colors (pale blue and white) for readability.
+      * Fixed null handling for ListView subitems to prevent crash.
+      * Color alternation is now based on VM identity, not line count.
 #>
 
 try {
@@ -29,145 +40,27 @@ $script:vmDirectory = "$env:USERPROFILE\Documents\Virtual Machines"
 $script:vmAuditData = @()
 $script:vmwareVersion = ""
 $logFile = "$env:TEMP\VMwareAudit_ErrorLog.txt"
-$script:currentVersion = "1.1.5"
+$script:currentVersion = "1.1.6"
 
 function Write-ErrorLog {
     param([string]$message)
     Add-Content -Path $logFile -Value "$(Get-Date -Format u): $message"
 }
-function Test-ForUpdate {
+
+function Check-ForUpdate {
     try {
         $url = "https://raw.githubusercontent.com/rich98/vmware_audit_powershell/main/VERSION.TXT"
-        $remoteVersion = (Invoke-RestMethod -Uri $url -UseBasicParsing).Trim()
+        $remoteVersion = (Invoke-RestMethod -Uri $url -UseBasicParsing) -replace '[\r\n]+', ''
         if ($remoteVersion -ne $script:currentVersion) {
-            [System.Windows.Forms.MessageBox]::Show("A newer version ($($remoteVersion.Trim())) is available.", "Update Available")
+            [System.Windows.Forms.MessageBox]::Show("A newer version ($remoteVersion) is available.", "Update Available")
         }
     } catch {
         Write-ErrorLog -message "Update check failed: $_"
     }
 }
 
-function Read-VMXFlat {
-    param (
-        [string]$filePath,
-        [string]$vmName
-    )
-    $result = @()
-    $vmxData = @{}
-    try {
-        $lines = Get-Content -Path $filePath -ErrorAction Stop
-        foreach ($line in $lines) {
-            if ($line -match '^[^#]*?([^=\s]+?)\s*=\s*"?(.+?)"?$') {
-                $key = $matches[1].Trim()
-                $value = $matches[2].Trim()
-                $vmxData[$key] = $value
-                $result += [PSCustomObject]@{
-                    VMName      = $vmName
-                    Key         = $key
-                    Value       = $value
-                    VMVersion   = $vmxData['virtualHW.version']
-                    SnapshotUID = ""
-                }
-            }
-        }
-    } catch {
-        Write-ErrorLog -message $_.Exception.Message
-        $result += [PSCustomObject]@{
-            VMName      = $vmName
-            Key         = "Error"
-            Value       = $_.Exception.Message
-            VMVersion   = ""
-            SnapshotUID = ""
-        }
-    }
-    return $result
-}
-
-function Read-SnapshotMeta {
-    param (
-        [string]$vmDir,
-        [string]$vmName
-    )
-    $vmsd = Join-Path $vmDir "$vmName.vmsd"
-    $results = @()
-
-    if (Test-Path $vmsd) {
-        try {
-            $content = Get-Content $vmsd | Where-Object { $_ -match "snapshot\\." }
-            foreach ($line in $content) {
-                $uid = ""
-                $desc = $line.Trim()
-                if ($line -match 'snapshot\\.([^.]+)\\.displayName\s*=\s*"(.+?)"') {
-                    $uid = $matches[1]
-                    $desc = $matches[2]
-                } elseif ($line -match 'snapshot\\.([^.]+)') {
-                    $uid = $matches[1]
-                }
-                $results += [PSCustomObject]@{
-                    VMName      = $vmName
-                    Key         = "SnapshotMeta"
-                    Value       = $desc
-                    VMVersion   = ""
-                    SnapshotUID = $uid
-                }
-            }
-        } catch {
-            Write-ErrorLog -message $_.Exception.Message
-            $results += [PSCustomObject]@{
-                VMName      = $vmName
-                Key         = "SnapshotMetaError"
-                Value       = $_.Exception.Message
-                VMVersion   = ""
-                SnapshotUID = ""
-            }
-        }
-    }
-
-    return $results
-}
-
-function Invoke-Audit {
-    $script:vmAuditData = @()
-
-    $vmwareReg = "HKLM:\\SOFTWARE\\WOW6432Node\\VMware, Inc.\\VMware Workstation"
-    if (Test-Path $vmwareReg) {
-        $script:vmwareVersion = (Get-ItemProperty -Path $vmwareReg).ProductVersion
-    } else {
-        $script:vmwareVersion = "Not Detected"
-    }
-
-    $vmxFiles = Get-ChildItem -Path $script:vmDirectory -Recurse -Filter *.vmx -ErrorAction SilentlyContinue | Sort-Object Name
-    foreach ($vmx in $vmxFiles) {
-        $vmName = [System.IO.Path]::GetFileNameWithoutExtension($vmx.FullName)
-        $vmDir = Split-Path $vmx.FullName
-        $script:vmAuditData += Read-VMXFlat -filePath $vmx.FullName -vmName $vmName
-        $script:vmAuditData += Read-SnapshotMeta -vmDir $vmDir -vmName $vmName
-    }
-}
-
-function Save-ToCSV {
-    $dlg = New-Object Windows.Forms.SaveFileDialog
-    $dlg.Filter = "CSV files (*.csv)|*.csv"
-    $dlg.Title = "Save Audit Report"
-    $dlg.FileName = "VMwareAuditReport.csv"
-    if ($dlg.ShowDialog() -eq "OK") {
-        try {
-            $script:vmAuditData | Export-Csv -Path $dlg.FileName -NoTypeInformation -Encoding UTF8
-            [System.Windows.Forms.MessageBox]::Show("Report saved to:`n$($dlg.FileName)", "Export Successful")
-        } catch {
-            Write-ErrorLog -message $_.Exception.Message
-            [System.Windows.Forms.MessageBox]::Show("Failed to save report.`nError: $_", "Error")
-        }
-    }
-}
-
-function Show-Help {
-    Test-ForUpdate
-    [System.Windows.Forms.MessageBox]::Show("This tool audits VMware Workstation VMs, extracting VMX data, hardware versions, and snapshot metadata. Results can be exported to CSV.", "Help")
-}
-
 function Show-GUI {
-    Test-ForUpdate
+    Check-ForUpdate
     $form = New-Object Windows.Forms.Form
     $form.Text = "VMware Workstation Auditor v$script:currentVersion (Table View)"
     $form.Size = New-Object Drawing.Size(1000, 660)
@@ -255,6 +148,9 @@ function Show-GUI {
         $listView.Items.Clear()
         Invoke-Audit
 
+        $colorMap = @{}
+        $vmColorIndex = 0
+
         foreach ($item in $script:vmAuditData) {
             $vmName      = if ($item.VMName) { $item.VMName } else { "" }
             $key         = if ($item.Key) { $item.Key } else { "" }
@@ -262,11 +158,23 @@ function Show-GUI {
             $vmVersion   = if ($item.VMVersion) { $item.VMVersion } else { "" }
             $snapshotUID = if ($item.SnapshotUID) { $item.SnapshotUID } else { "" }
 
+            if (-not $colorMap.ContainsKey($vmName)) {
+                $colorMap[$vmName] = $vmColorIndex % 2
+                $vmColorIndex++
+            }
+
             $row = New-Object Windows.Forms.ListViewItem($vmName)
             [void]$row.SubItems.Add($key)
             [void]$row.SubItems.Add($value)
             [void]$row.SubItems.Add($vmVersion)
             [void]$row.SubItems.Add($snapshotUID)
+
+            if ($colorMap[$vmName] -eq 0) {
+                $row.BackColor = [System.Drawing.Color]::White
+            } else {
+                $row.BackColor = [System.Drawing.Color]::FromArgb(240, 248, 255)
+            }
+
             $listView.Items.Add($row)
         }
 
@@ -276,7 +184,7 @@ function Show-GUI {
         $uniqueVMs = ($script:vmAuditData | Select-Object -ExpandProperty VMName -Unique).Count
         $lblCount.Text = "VMs Detected: $uniqueVMs"
 
-        Test-ForUpdate
+        Check-ForUpdate
     })
 
     [void]$form.ShowDialog()
