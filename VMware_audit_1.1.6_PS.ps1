@@ -189,8 +189,8 @@ function Save-ToCSV {
 }
 
 function Show-Help {
-    Test-ForUpdate
-    [System.Windows.Forms.MessageBox]::Show("This tool audits VMware Workstation VMs, extracting VMX data, hardware versions, and snapshot metadata. Results can be exported to CSV.", "Help")
+    Check-ForUpdate
+    [System.Windows.Forms.MessageBox]::Show("Usage Instructions:`n`n1. Select or confirm the Virtual Machine directory path at the top.`n2. Click 'Run Audit' to scan for VM configuration and snapshot details.`n3. Review the results in the table view.`n4. Click 'Save to CSV' to export the findings.`n`nAdditional Info:`n- Detected VMware Workstation version is shown at the bottom.`n- Rows alternate in color for improved readability.`n- Errors or inaccessible files will be logged in the local log file.", "Help")
 }
 
 function Show-GUI {
@@ -326,7 +326,6 @@ function Show-GUI {
 }
 
 Show-GUI
-
 
 
 
