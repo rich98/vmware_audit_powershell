@@ -20,7 +20,7 @@ Affter running:
 - Sortable table output with detailed VM configuration
 - Export audit report to `.CSV`
 - Check for updates
-
+- You do not need to be Admin to run, but you will need access to the VMware Worstation folder, for best results run as administrator
 ---
 
 ## 📦 Requirements
