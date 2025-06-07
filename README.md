@@ -76,5 +76,5 @@ Contributions are welcome via pull requests. Bug reports and feature suggestions
 
 📞 Contact
 For professional inquiries or related scripting needs, please contact:
-Richard Wadsworth linkedin.com/in/rcwadsworth
+Richard Wadsworth https://linkedin.com/in/rcwadsworth
 IT & Systems Auditor Infomation Assurance Manger 
