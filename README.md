@@ -66,10 +66,7 @@ See LICENSE for full terms.
 🤝 Contributions
 Contributions are welcome via pull requests. Bug reports and feature suggestions can be submitted through GitHub Issues.
 
-📸 Screenshot
-Add a screenshot to the docs/ folder and link it at the top of this README to enhance visual clarity.
-
 📞 Contact
 For professional inquiries or related scripting needs, please contact:
 Richard Wadsworth
-IT & Systems Auditor
+IT & Systems Auditor Infomation Assurance Manger 
