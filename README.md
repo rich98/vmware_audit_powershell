@@ -15,6 +15,7 @@ A graphical PowerShell utility that audits VMware Workstation environments, extr
 - Displays VMware version detected on the system
 - Sortable table output with detailed VM configuration
 - Export audit report to `.CSV`
+- Check for updates
 
 ---
 
