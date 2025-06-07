@@ -2,7 +2,7 @@
 
 A graphical PowerShell utility that audits VMware Workstation environments, extracting VM metadata, snapshots, configuration keys, and version details, then displays them in a sortable GUI table.
 
-![image](https://github.com/user-attachments/assets/8508897c-4eea-44fa-b949-d4dc9ca1d9e8)
+![image](https://github.com/user-attachments/assets/715afd4a-6863-475a-bf83-afa57a98a9b8)
 
 ---
 
